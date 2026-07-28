@@ -99,17 +99,25 @@ jobs:
       # ------------------------------------------------------------------
       - name: Locate compiled Image
         run: |
-          echo "Contenido de $DIST_DIR:"
-          ls -la "$DIST_DIR" || (echo "DIST_DIR no existe, el build falló antes de terminar" && exit 1)
+          echo "===== Árbol completo de $DIST_DIR ====="
+          find "$DIST_DIR" 2>/dev/null || (echo "DIST_DIR no existe, el build falló antes de terminar" && exit 1)
 
-          if [ -f "$DIST_DIR/Image" ]; then
-            cp "$DIST_DIR/Image" ./Image
-          elif [ -f "$DIST_DIR/Image.gz" ]; then
-            cp "$DIST_DIR/Image.gz" ./Image
-          else
-            echo "No se encontró Image ni Image.gz en $DIST_DIR"
+          echo ""
+          echo "===== Buscando Image / Image.gz dentro de DIST_DIR ====="
+          FOUND=$(find "$DIST_DIR" -type f \( -name "Image" -o -name "Image.gz" \) | head -n1)
+
+          if [ -z "$FOUND" ]; then
+            echo "No se encontró dentro de DIST_DIR, ampliando búsqueda a todo OUT_DIR (KLEAF_OBJ)..."
+            FOUND=$(find out/target/product/a05m/obj/KLEAF_OBJ -type f \( -name "Image" -o -name "Image.gz" \) 2>/dev/null | head -n1)
+          fi
+
+          if [ -z "$FOUND" ]; then
+            echo "No se encontró Image ni Image.gz en ningún lado bajo KLEAF_OBJ"
             exit 1
           fi
+
+          echo "Image encontrado en: $FOUND"
+          cp "$FOUND" ./Image
 
       # ------------------------------------------------------------------
       # 6. Empaquetar en AnyKernel3 (ya está en el repo con tu propio
