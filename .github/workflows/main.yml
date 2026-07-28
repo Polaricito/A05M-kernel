@@ -20,7 +20,7 @@ on:
       release_tag:
         description: "Tag del release a crear (ej: v1.0-KSU-3.3.0)"
         required: true
-        default: "v1.0-KSU"
+        default: "v3.3.0"
 
 permissions:
   contents: write
@@ -28,7 +28,10 @@ permissions:
 # Rutas fijas del build (según build_kernel.sh)
 env:
   DIST_DIR: out/target/product/a05m/obj/KLEAF_OBJ/dist
-  KERNEL_SRC: kernel/kernel_device_modules-6.6
+  # kernel-6.6/ (raíz del repo) es el árbol REAL de Linux (drivers/, arch/,
+  # Makefile, Kconfig). kernel/kernel_device_modules-6.6 son solo los
+  # módulos externos de MediaTek, ahí NO va KernelSU-Next.
+  KERNEL_SRC: kernel-6.6
 
 jobs:
   build:
@@ -166,3 +169,4 @@ jobs:
             ${{ env.ZIP_NAME }}
             Image
             KernelSU-Next-Manager-*.apk
+            
