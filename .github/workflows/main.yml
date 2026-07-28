@@ -143,9 +143,9 @@ jobs:
           path: ksu-next-manager
           submodules: recursive
 
-      # Fija el JDK activo a 17 (JAVA_HOME + PATH), evita el conflicto con
+      # Fija el JDK activo a 21 (JAVA_HOME + PATH), evita el conflicto con
       # otras JDKs preinstaladas en el runner que rompían sdkmanager.
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
@@ -170,12 +170,15 @@ jobs:
 
       - name: Locate manager APK
         run: |
-          APK_PATH=$(find ksu-next-manager -type f -name "*release*.apk" | head -n1)
+          echo "===== Buscando APKs generados ====="
+          find . -type f -name "*.apk"
+          APK_PATH=$(find . -type f -name "*release*.apk" | head -n1)
           if [ -z "$APK_PATH" ]; then
-            echo "No se encontró el APK del manager compilado"
+            echo "No se encontró el APK release, revisa el listado de arriba"
             exit 1
           fi
-          cp "$APK_PATH" "./KernelSU-Next-Manager-${{ github.event.inputs.ksu_version }}.apk"
+          mkdir -p /tmp/artifact
+          cp "$APK_PATH" "/tmp/artifact/KernelSU-Next-Manager-${{ github.event.inputs.ksu_version }}.apk"
 
       # ------------------------------------------------------------------
       # 8. Crear el release automáticamente con los 3 archivos
