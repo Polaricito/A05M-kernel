@@ -10,3 +10,5 @@ Toolchain
 - external
 - prebuilts
 - kernel/prebuilts
+
+Check last release [here](https://github.com/Polaricito/A05M-kernel/releases)
