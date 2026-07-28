@@ -128,17 +128,20 @@ jobs:
           echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------
-      # 8. Crear el release automáticamente con los 3 archivos
+      # 8. Crear el Release automáticamente usando la misma tag de KernelSU
       # ------------------------------------------------------------------
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.release_tag }}
+          tag_name: ${{ github.event.inputs.ksu_version }}
           name: "A05M Kernel - KernelSU-Next ${{ github.event.inputs.ksu_version }}"
           body: |
             Build automático.
+
             - KernelSU-Next: ${{ github.event.inputs.ksu_version }}
-            - Fecha: ${{ github.run_id }}
+            - Commit: ${{ github.sha }}
+            - Run ID: ${{ github.run_id }}
+
           files: |
             ${{ env.ZIP_NAME }}
             Image
