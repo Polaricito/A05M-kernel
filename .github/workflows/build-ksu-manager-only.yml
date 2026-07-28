@@ -1,0 +1,63 @@
+name: Build KernelSU-Next Manager (standalone test)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_version:
+        description: "Tag de KernelSU-Next a usar (ej: v3.3.0)"
+        required: true
+        default: "v3.3.0"
+
+permissions:
+  contents: read
+
+jobs:
+  build-manager:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout KernelSU-Next manager
+        uses: actions/checkout@v4
+        with:
+          repository: KernelSU-Next/KernelSU-Next
+          ref: ${{ github.event.inputs.ksu_version }}
+          submodules: recursive
+
+      # Fija el JDK activo a 17 (JAVA_HOME + PATH), evita el conflicto con
+      # otras JDKs preinstaladas en el runner que rompían sdkmanager.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      # Mismo fix de permisos que en el workflow principal, por si acaso.
+      - name: Fix Android SDK directory permissions
+        run: |
+          sudo mkdir -p /usr/local/lib/android
+          sudo chown -R "$USER":"$USER" /usr/local/lib/android
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build manager APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :manager:assembleRelease
+
+      - name: Locate manager APK
+        run: |
+          echo "===== Buscando APKs generados ====="
+          find . -type f -name "*.apk"
+          APK_PATH=$(find . -type f -name "*release*.apk" | head -n1)
+          if [ -z "$APK_PATH" ]; then
+            echo "No se encontró el APK release, revisa el listado de arriba"
+            exit 1
+          fi
+          mkdir -p /tmp/artifact
+          cp "$APK_PATH" "/tmp/artifact/KernelSU-Next-Manager-${{ github.event.inputs.ksu_version }}.apk"
+
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ksu-next-manager-apk
+          path: /tmp/artifact/*.apk
