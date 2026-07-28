@@ -17,10 +17,6 @@ on:
         description: "Tag de KernelSU-Next a usar (ej: v3.3.0)"
         required: true
         default: "v3.3.0"
-      release_tag:
-        description: "Tag del release a crear (ej: v1.0-KSU-3.3.0)"
-        required: true
-        default: "v3.3.0"
 
 permissions:
   contents: write
@@ -132,55 +128,6 @@ jobs:
           echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------
-      # 7. Compilar el APK del manager de KernelSU-Next en la misma tag
-      #    (checkout aparte para no mezclarlo con el árbol del kernel)
-      # ------------------------------------------------------------------
-      - name: Checkout KernelSU-Next manager
-        uses: actions/checkout@v4
-        with:
-          repository: KernelSU-Next/KernelSU-Next
-          ref: ${{ github.event.inputs.ksu_version }}
-          path: ksu-next-manager
-          submodules: recursive
-
-      # Fija el JDK activo a 21 (JAVA_HOME + PATH), evita el conflicto con
-      # otras JDKs preinstaladas en el runner que rompían sdkmanager.
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "21"
-
-      # El runner ya trae un SDK preinstalado en /usr/local/lib/android con
-      # permisos que a veces bloquean a la action de abajo (EACCES). Se
-      # fuerza el ownership antes de que intente escribir ahí.
-      - name: Fix Android SDK directory permissions
-        run: |
-          sudo mkdir -p /usr/local/lib/android
-          sudo chown -R "$USER":"$USER" /usr/local/lib/android
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Build manager APK
-        run: |
-          cd manager
-          chmod +x gradlew
-          ./gradlew assembleRelease
-
-      - name: Locate manager APK
-        run: |
-          echo "===== Buscando APKs generados ====="
-          find . -type f -name "*.apk"
-          APK_PATH=$(find . -type f -name "*release*.apk" | head -n1)
-          if [ -z "$APK_PATH" ]; then
-            echo "No se encontró el APK release, revisa el listado de arriba"
-            exit 1
-          fi
-          mkdir -p /tmp/artifact
-          cp "$APK_PATH" "/tmp/artifact/KernelSU-Next-Manager-${{ github.event.inputs.ksu_version }}.apk"
-
-      # ------------------------------------------------------------------
       # 8. Crear el release automáticamente con los 3 archivos
       # ------------------------------------------------------------------
       - name: Create GitHub Release
@@ -195,5 +142,3 @@ jobs:
           files: |
             ${{ env.ZIP_NAME }}
             Image
-            KernelSU-Next-Manager-*.apk
-            
