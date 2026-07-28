@@ -50,8 +50,9 @@ jobs:
 
       - name: Build manager APK
         run: |
+          cd manager
           chmod +x gradlew
-          ./gradlew :manager:assembleRelease
+          ./gradlew assembleRelease
 
       - name: Locate manager APK
         run: |
