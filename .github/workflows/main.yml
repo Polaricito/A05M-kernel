@@ -20,7 +20,7 @@ on:
       release_tag:
         description: "Tag del release a crear (ej: v1.0-KSU-3.3.0)"
         required: true
-        default: "v3.3.0"
+        default: "v1.0-KSU"
 
 permissions:
   contents: write
@@ -142,6 +142,14 @@ jobs:
           ref: ${{ github.event.inputs.ksu_version }}
           path: ksu-next-manager
           submodules: recursive
+
+      # El runner ya trae un SDK preinstalado en /usr/local/lib/android con
+      # permisos que a veces bloquean a la action de abajo (EACCES). Se
+      # fuerza el ownership antes de que intente escribir ahí.
+      - name: Fix Android SDK directory permissions
+        run: |
+          sudo mkdir -p /usr/local/lib/android
+          sudo chown -R "$USER":"$USER" /usr/local/lib/android
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
