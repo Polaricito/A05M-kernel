@@ -1,8 +1,8 @@
 # A05M-kernel
 
 Kernel
-- kernel
-- kernel-6.6
+- kernel     (Mediatek modules)
+- kernel-6.6 (Android kernel)
 - vendor
 
 Toolchain
