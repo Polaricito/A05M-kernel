@@ -37,7 +37,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "17"
+          java-version: "21"
 
       # Mismo fix de permisos que en el workflow principal, por si acaso.
       - name: Fix Android SDK directory permissions
