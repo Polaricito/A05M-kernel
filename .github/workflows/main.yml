@@ -1,12 +1,6 @@
 name: Build KernelSU-Next + AnyKernel3 Release
 
 on:
-  # Trigger temporal: solo sirve para que GitHub "registre" el workflow
-  # la primera vez (bug conocido con workflows que solo usan
-  # workflow_dispatch y nunca han corrido). Restringido a cambios en este
-  # mismo archivo para no disparar builds completos en cada push normal.
-  # Una vez que aparezca en "gh workflow list" / la pestaña Actions,
-  # puedes borrar este bloque "push" sin problema.
   push:
     branches: [main]
     paths:
@@ -15,23 +9,18 @@ on:
 permissions:
   contents: write
 
-# Rutas fijas del build (según build_kernel.sh)
 env:
   DIST_DIR: out/target/product/a05m/obj/KLEAF_OBJ/dist
-  # kernel-6.6/ (raíz del repo) es el árbol REAL de Linux (drivers/, arch/,
-  # Makefile, Kconfig). kernel/kernel_device_modules-6.6 son solo los
-  # módulos externos de MediaTek, ahí NO va KernelSU-Next.
   KERNEL_SRC: kernel-6.6
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+
     steps:
       # ------------------------------------------------------------------
-      # 0. Liberar espacio en disco: los builds Bazel/Kleaf con toolchain
-      #    de Samsung + prebuilts son pesados y el runner gratuito trae
-      #    solo ~14GB libres por defecto.
+      # 0. Liberar espacio
       # ------------------------------------------------------------------
       - name: Free disk space
         run: |
@@ -41,8 +30,7 @@ jobs:
           df -h
 
       # ------------------------------------------------------------------
-      # 1. Checkout del kernel completo (submódulos + LFS por si el
-      #    toolchain/prebuilts vienen así)
+      # 1. Checkout
       # ------------------------------------------------------------------
       - name: Checkout kernel source
         uses: actions/checkout@v4
@@ -52,31 +40,56 @@ jobs:
           lfs: true
 
       # ------------------------------------------------------------------
-      # 2. Dependencias de build
-      #    "python" (sin 3) porque gen_build_config.py se invoca así en
-      #    build_kernel.sh -> necesitamos python-is-python3
+      # 2. Dependencias
       # ------------------------------------------------------------------
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential bc bison flex libssl-dev libelf-dev \
-            python3 python3-pip python-is-python3 git curl zip unzip rsync \
-            device-tree-compiler cpio kmod libncurses-dev \
+            build-essential \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            python3 \
+            python3-pip \
+            python-is-python3 \
+            git \
+            curl \
+            jq \
+            zip \
+            unzip \
+            rsync \
+            device-tree-compiler \
+            cpio \
+            kmod \
+            libncurses-dev \
             openjdk-17-jdk
 
       # ------------------------------------------------------------------
-      # 3. Integrar KernelSU-Next en la versión especificada
-      #    Se ejecuta DENTRO del árbol real del kernel (donde están
-      #    drivers/, arch/, Makefile), no en la raíz del repo.
+      # 3. Obtener la última release de KernelSU-Next
       # ------------------------------------------------------------------
-      - name: Integrate KernelSU-Next latest
+      - name: Get latest KernelSU-Next release
+        run: |
+          KSU_VERSION=$(curl -s https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest | jq -r '.tag_name')
+
+          echo "KernelSU Version: $KSU_VERSION"
+
+          echo "KSU_VERSION=$KSU_VERSION" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------
+      # 4. Integrar KernelSU-Next
+      # ------------------------------------------------------------------
+      - name: Integrate KernelSU-Next
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
-          
+          curl -LSs \
+            "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" \
+            | bash -s "${KSU_VERSION}"
+
       # ------------------------------------------------------------------
-      # 4. Compilar el kernel con el script del repo (Bazel/Kleaf)
+      # 5. Compilar
       # ------------------------------------------------------------------
       - name: Build kernel
         run: |
@@ -84,54 +97,58 @@ jobs:
           ./build_kernel.sh
 
       # ------------------------------------------------------------------
-      # 5. Verificar y copiar el Image desde el DIST_DIR real
+      # 6. Buscar Image
       # ------------------------------------------------------------------
       - name: Locate compiled Image
         run: |
-          echo "===== Árbol completo de $DIST_DIR ====="
-          find "$DIST_DIR" 2>/dev/null || (echo "DIST_DIR no existe, el build falló antes de terminar" && exit 1)
+          echo "===== DIST_DIR ====="
+          find "$DIST_DIR" || {
+            echo "DIST_DIR no existe"
+            exit 1
+          }
 
-          echo ""
-          echo "===== Buscando Image / Image.gz dentro de DIST_DIR ====="
           FOUND=$(find "$DIST_DIR" -type f \( -name "Image" -o -name "Image.gz" \) | head -n1)
 
           if [ -z "$FOUND" ]; then
-            echo "No se encontró dentro de DIST_DIR, ampliando búsqueda a todo OUT_DIR (KLEAF_OBJ)..."
-            FOUND=$(find out/target/product/a05m/obj/KLEAF_OBJ -type f \( -name "Image" -o -name "Image.gz" \) 2>/dev/null | head -n1)
+            FOUND=$(find out/target/product/a05m/obj/KLEAF_OBJ \
+              -type f \( -name "Image" -o -name "Image.gz" \) | head -n1)
           fi
 
           if [ -z "$FOUND" ]; then
-            echo "No se encontró Image ni Image.gz en ningún lado bajo KLEAF_OBJ"
+            echo "No se encontró Image"
             exit 1
           fi
 
-          echo "Image encontrado en: $FOUND"
+          echo "Kernel image: $FOUND"
+
           cp "$FOUND" ./Image
 
       # ------------------------------------------------------------------
-      # 6. Empaquetar en AnyKernel3 (ya está en el repo con tu propio
-      #    anykernel.sh, así que solo reemplazamos el Image y zippeamos)
+      # 7. Empaquetar AnyKernel3
       # ------------------------------------------------------------------
       - name: Package AnyKernel3
         run: |
           cp ./Image AnyKernel3/Image
+
+          ZIP_NAME="AnyKernel3-KSU-${KSU_VERSION}-$(date +%Y%m%d).zip"
+
           cd AnyKernel3
-          ZIP_NAME="AnyKernel3-KSU-${{ github.event.inputs.ksu_version }}-$(date +%Y%m%d).zip"
           zip -r9 "../$ZIP_NAME" . -x ".git*"
+
           echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------
-      # 8. Crear el Release automáticamente usando la misma tag de KernelSU
+      # 8. Crear Release
       # ------------------------------------------------------------------
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.ksu_version }}
-          name: "A05M Kernel - KernelSU-Next ${{ github.event.inputs.ksu_version }}"
+          tag_name: ${{ env.KSU_VERSION }}
+          name: "A05M Kernel - KernelSU-Next ${{ env.KSU_VERSION }}"
           body: |
             Build automático.
 
-            - KernelSU-Next: ${{ github.event.inputs.ksu_version }}
+            - KernelSU-Next: ${{ env.KSU_VERSION }}
             - Commit: ${{ github.sha }}
             - Run ID: ${{ github.run_id }}
 
