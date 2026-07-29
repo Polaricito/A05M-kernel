@@ -89,6 +89,9 @@ jobs:
           echo "KernelSU Version: $KSU_VERSION"
           echo "KSU_VERSION=$KSU_VERSION" >> "$GITHUB_ENV"
 
+      - name: Fix git safe.directory
+        run: git config --global --add safe.directory '*'
+
       # ------------------------------------------------------------------
       # 4. Integrar KernelSU-Next
       # ------------------------------------------------------------------
@@ -98,6 +101,10 @@ jobs:
           curl -LSs \
             "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" \
             | bash -s "${KSU_VERSION}"
+
+      - name: Debug KSU git version
+        working-directory: ${{ env.KERNEL_SRC }}/KernelSU-Next
+        run: git rev-list --count HEAD || echo "FALLÓ el conteo de commits"
 
       # ------------------------------------------------------------------
       # 5. Compilar
