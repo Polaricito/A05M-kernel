@@ -100,17 +100,31 @@ jobs:
           echo "⚠️  Usando el fork pershoot/KernelSU-Next — marcado por su propio mantenedor como NO apto para producción."
 
           KSUN_BRANCH=""
-          for cand in "next-susfs" "dev-susfs"; do
+          for cand in "dev-susfs" "next-susfs"; do
             if curl -fsSL "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/${cand}/kernel/setup.sh" -o /tmp/ksun_setup.sh 2>/dev/null; then
               KSUN_BRANCH="$cand"
               break
             fi
           done
-          test -n "$KSUN_BRANCH" || { echo "❌ Ninguna rama conocida (next-susfs, dev-susfs) existe en pershoot/KernelSU-Next. Revisar https://github.com/pershoot/KernelSU-Next/branches"; exit 1; }
+          test -n "$KSUN_BRANCH" || { echo "❌ Ninguna rama conocida (dev-susfs, next-susfs) existe en pershoot/KernelSU-Next. Revisar https://github.com/pershoot/KernelSU-Next/branches"; exit 1; }
           echo "📥 Instalando KernelSU-Next desde la rama '$KSUN_BRANCH'..."
-          bash /tmp/ksun_setup.sh -s "$KSUN_BRANCH"
+          # NOTA: el "-s" de "curl ... | bash -s ARG" es una bandera de bash (leer
+          # script desde stdin), NO un argumento del script. Como aquí lo guardamos
+          # a un archivo y lo ejecutamos directo, se pasa SOLO el nombre de rama,
+          # sin "-s" — pasarlo como argumento del script rompía el checkout interno
+          # (esto fue justamente el bug que causó el fallo anterior).
+          bash /tmp/ksun_setup.sh "$KSUN_BRANCH"
 
           test -d KernelSU-Next || { echo "❌ Falló la integración de KernelSU-Next (fork pershoot, rama $KSUN_BRANCH)"; exit 1; }
+
+          echo "🔎 Confirmando que realmente quedamos en la rama $KSUN_BRANCH (no en la rama por defecto)..."
+          ACTUAL_BRANCH=$(cd KernelSU-Next && git rev-parse --abbrev-ref HEAD)
+          if [ "$ACTUAL_BRANCH" != "$KSUN_BRANCH" ]; then
+            echo "❌ El checkout interno del setup.sh no cambió de rama: seguimos en '$ACTUAL_BRANCH', no en '$KSUN_BRANCH'."
+            echo "   Forzando el checkout manualmente..."
+            (cd KernelSU-Next && git fetch origin "$KSUN_BRANCH" && git checkout "$KSUN_BRANCH") || { echo "❌ No se pudo forzar el checkout a $KSUN_BRANCH"; exit 1; }
+          fi
+          echo "✅ En la rama correcta: $(cd KernelSU-Next && git rev-parse --abbrev-ref HEAD)"
 
           echo "🔎 Verificando que el driver traiga soporte SUSFS (CONFIG_KSU_SUSFS en Kconfig)..."
           grep -rq "KSU_SUSFS" KernelSU-Next/kernel/Kconfig || {
