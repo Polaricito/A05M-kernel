@@ -11,12 +11,6 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/build_ksu-release.yml"
-  workflow_dispatch:
-    inputs:
-      ksu_version:
-        description: "Tag de KernelSU-Next a usar (ej: v3.3.0)"
-        required: true
-        default: "v3.3.0"
 
 permissions:
   contents: write
@@ -76,12 +70,11 @@ jobs:
       #    Se ejecuta DENTRO del árbol real del kernel (donde están
       #    drivers/, arch/, Makefile), no en la raíz del repo.
       # ------------------------------------------------------------------
-      - name: Integrate KernelSU-Next (${{ github.event.inputs.ksu_version }})
+      - name: Integrate KernelSU-Next latest
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | \
-            bash -s ${{ github.event.inputs.ksu_version }}
-
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+          
       # ------------------------------------------------------------------
       # 4. Compilar el kernel con el script del repo (Bazel/Kleaf)
       # ------------------------------------------------------------------
