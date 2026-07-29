@@ -80,29 +80,41 @@ jobs:
       # funcional para kernel 6.6 (issue abierto #1293 pidiendo
       # exactamente esto, sin resolver). La única combinación que hoy
       # compila esto es un FORK personal del mantenedor "pershoot":
-      #   - Driver:  https://github.com/pershoot/KernelSU-Next  (rama dev-susfs)
-      #   - Parches: https://gitlab.com/pershoot/susfs4ksu      (rama gki-android15-6.6-dev)
-      # Es la misma combinación que usa WildKernels en sus releases
-      # públicos de GKI_KernelSU_SUSFS para gki-android15-6.6.
+      #   - Driver:  https://github.com/pershoot/KernelSU-Next  (rama next-susfs,
+      #     confirmada por fetch directo del setup.sh real — no un snippet de
+      #     búsqueda. WildKernels menciona además una rama "dev-susfs" que
+      #     podría ser más nueva; probamos next-susfs primero y caemos a
+      #     dev-susfs si no existe, en vez de asumir un solo nombre)
+      #   - Parches fs/: repo OFICIAL simonpunk/susfs4ksu (rama gki-android15-6.6,
+      #     genérica entre forks — pershoot/susfs4ksu NO tiene rama 6.6, solo 6.1)
       #
       # ⚠️ El propio pershoot advierte que esta rama NO está lista para
       # producción, solo para pruebas/desarrollo. Si este build es para
       # un dispositivo real (no solo CI de prueba), evalúa si prefieres
       # quedarte con SukiSU-Ultra para 6.6 en su lugar.
       # -----------------------------------------------------------------
-      - name: Integrar KernelSU-Next (fork pershoot, rama dev-susfs - EXPERIMENTAL)
+      - name: Integrar KernelSU-Next (fork pershoot, rama next-susfs - EXPERIMENTAL)
         if: ${{ inputs.root_provider == 'ksu-next-stable' }}
         working-directory: ./kernel-6.6
         run: |
-          echo "⚠️  Usando pershoot/KernelSU-Next @ dev-susfs — rama marcada por su propio mantenedor como NO apta para producción."
-          echo "📥 Instalando KernelSU-Next..."
-          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          echo "⚠️  Usando el fork pershoot/KernelSU-Next — marcado por su propio mantenedor como NO apto para producción."
 
-          test -d KernelSU-Next || { echo "❌ Falló la integración de KernelSU-Next (fork pershoot, rama dev-susfs)"; exit 1; }
+          KSUN_BRANCH=""
+          for cand in "next-susfs" "dev-susfs"; do
+            if curl -fsSL "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/${cand}/kernel/setup.sh" -o /tmp/ksun_setup.sh 2>/dev/null; then
+              KSUN_BRANCH="$cand"
+              break
+            fi
+          done
+          test -n "$KSUN_BRANCH" || { echo "❌ Ninguna rama conocida (next-susfs, dev-susfs) existe en pershoot/KernelSU-Next. Revisar https://github.com/pershoot/KernelSU-Next/branches"; exit 1; }
+          echo "📥 Instalando KernelSU-Next desde la rama '$KSUN_BRANCH'..."
+          bash /tmp/ksun_setup.sh -s "$KSUN_BRANCH"
+
+          test -d KernelSU-Next || { echo "❌ Falló la integración de KernelSU-Next (fork pershoot, rama $KSUN_BRANCH)"; exit 1; }
 
           echo "🔎 Verificando que el driver traiga soporte SUSFS (CONFIG_KSU_SUSFS en Kconfig)..."
           grep -rq "KSU_SUSFS" KernelSU-Next/kernel/Kconfig || {
-            echo "❌ KernelSU-Next/kernel/Kconfig no menciona KSU_SUSFS — la rama dev-susfs pudo haber cambiado, revisar a mano en https://github.com/pershoot/KernelSU-Next/branches";
+            echo "❌ KernelSU-Next/kernel/Kconfig no menciona KSU_SUSFS — la rama $KSUN_BRANCH pudo haber cambiado, revisar a mano en https://github.com/pershoot/KernelSU-Next/branches";
             exit 1;
           }
           echo "✅ Kconfig confirma soporte SUSFS integrado en el driver"
@@ -110,23 +122,23 @@ jobs:
           echo "KSUN_COMMIT=$(cd KernelSU-Next && git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------
-      # PASO 2: Aplicar los parches SUSFS correspondientes a esta misma
-      # rama del driver. Usamos el fork de SUSFS de pershoot (no el de
-      # simonpunk) porque está sincronizado específicamente contra este
-      # driver — mezclar el susfs4ksu genérico con el driver de pershoot
-      # es exactamente lo que causaba los rechazos de antes.
+      # PASO 2: Aplicar el parche 50 (fs/) al kernel.
+      #
+      # CORREGIDO: pershoot/susfs4ksu solo mantiene ramas para 6.1 (no
+      # existe una rama 6.6 ahí — confirmado, no es un fork "universal").
+      # El parche de fs/ es genérico entre forks del driver, así que
+      # usamos el repo OFICIAL de simonpunk (el mismo que ya usabas desde
+      # el principio) con su rama estable gki-android15-6.6. Solo el
+      # DRIVER (paso anterior) necesita el fork de pershoot; el parche de
+      # fs/ no.
       # -----------------------------------------------------------------
       - name: Integrar parches SUSFS al código del Kernel (Rama GKI 6.6) - KernelSU-Next
         if: ${{ inputs.root_provider == 'ksu-next-stable' }}
         working-directory: ./kernel-6.6
         run: |
           set -e
-          echo "📥 Clonando repositorio de SUSFS de pershoot (Rama gki-android15-6.6-dev)..."
-          git clone -b gki-android15-6.6-dev https://gitlab.com/pershoot/susfs4ksu.git ../susfs4ksu || {
-            echo "❌ No existe (o cambió de nombre) la rama gki-android15-6.6-dev en pershoot/susfs4ksu."
-            echo "   Revisar ramas disponibles en: https://gitlab.com/pershoot/susfs4ksu/-/branches"
-            exit 1
-          }
+          echo "📥 Clonando repositorio oficial de SUSFS (Rama gki-android15-6.6)..."
+          git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
 
           echo "📂 Copiando archivos base de SUSFS al kernel..."
           cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/
@@ -233,13 +245,13 @@ jobs:
 
           grep -q "susfs" fs/Makefile || { echo "❌ El parche 50 no modificó fs/Makefile como se esperaba, abortando en vez de inyectar a mano"; exit 1; }
 
-          echo "🔎 Verificación final: el driver de pershoot (rama dev-susfs) ya trae susfs_init() de fábrica"
+          echo "🔎 Verificación final: el driver de pershoot (rama next-susfs/dev-susfs) ya trae susfs_init() de fábrica"
           if [ -f drivers/kernelsu/core/init.c ]; then
             grep -q "susfs_init()" drivers/kernelsu/core/init.c && echo "✅ susfs_init() presente en drivers/kernelsu/core/init.c" \
               || echo "⚠️ No se encontró susfs_init() en drivers/kernelsu/core/init.c — revisar si el symlink apunta a KernelSU-Next/ correctamente"
           elif [ -f KernelSU-Next/kernel/core/init.c ]; then
-            grep -q "susfs_init()" KernelSU-Next/kernel/core/init.c && echo "✅ susfs_init() presente en KernelSU-Next/kernel/core/init.c (integrado de fábrica en dev-susfs)" \
-              || echo "⚠️ No se encontró susfs_init() en el init.c del driver — inesperado para la rama dev-susfs, revisar a mano"
+            grep -q "susfs_init()" KernelSU-Next/kernel/core/init.c && echo "✅ susfs_init() presente en KernelSU-Next/kernel/core/init.c (integrado de fábrica en esta rama)" \
+              || echo "⚠️ No se encontró susfs_init() en el init.c del driver — inesperado, revisar a mano"
           fi
 
       # ------------------------------------------------------------------
