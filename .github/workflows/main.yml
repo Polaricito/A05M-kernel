@@ -81,6 +81,239 @@ jobs:
           find KernelSU \( -iname "app_profile.h" -o -iname "feature.h" -o -iname "selinux.h" -o -iname "sulog.h" -o -iname "supercall.h" \) 2>/dev/null
           echo "🔎 Contenido de KernelSU/kernel/Makefile (para ver flags -I y wiring real):"
           cat KernelSU/kernel/Makefile 2>/dev/null || echo "   (no existe KernelSU/kernel/Makefile)"
+          
+      - name: Integrar parches SUSFS al código del Kernel (Rama GKI 6.6) - KernelSU-Next
+        if: ${{ inputs.root_provider == 'ksu-next-stable' }}
+        working-directory: ./kernel-6.6
+        run: |
+          set -e
+          echo "📥 Clonando repositorio de SUSFS (Rama gki-android15-6.6)..."
+          git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
+
+          echo "📂 Copiando archivos base de SUSFS al kernel..."
+          cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/
+          cp -r ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
+
+          PATCH_DIR="../susfs4ksu/kernel_patches"
+
+          # -----------------------------------------------------------------
+          # 0. Detectar el directorio real del driver de KernelSU-Next.
+          #    A diferencia de SukiSU-Ultra (siempre "KernelSU/"), el nombre
+          #    de carpeta de KernelSU-Next varía según cómo lo hayan agregado
+          #    como submódulo/subtree (a veces "KernelSU-Next/", a veces
+          #    sigue llamándose "KernelSU/" porque es un fork). Detectamos
+          #    en vivo en lugar de asumir.
+          # -----------------------------------------------------------------
+          echo "🔎 Buscando el directorio del driver de KernelSU-Next..."
+          KSU_DIR=""
+          for cand in "KernelSU-Next" "KernelSU"; do
+            if [ -f "$cand/kernel/core/init.c" ]; then
+              KSU_DIR="$cand"
+              break
+            fi
+          done
+          if [ -z "$KSU_DIR" ]; then
+            echo "❌ No se encontró kernel/core/init.c en KernelSU-Next/ ni en KernelSU/."
+            echo "   Listando directorios de primer nivel para diagnóstico:"
+            ls -la .
+            exit 1
+          fi
+          echo "✅ Driver detectado en: $KSU_DIR/"
+          INIT_C="$KSU_DIR/kernel/core/init.c"
+
+          # -----------------------------------------------------------------
+          # 1. Aplicar el parche 10 (habilita SUSFS en el driver KSU)
+          # -----------------------------------------------------------------
+          echo "🩹 [1/2] Aplicando parche 10 sobre el driver de KernelSU-Next ($KSU_DIR/)"
+          PATCH_10="$PATCH_DIR/KernelSU/10_enable_susfs_for_ksu.patch"
+          if [ ! -f "$PATCH_10" ]; then
+            echo "❌ No se encontró 10_enable_susfs_for_ksu.patch en $PATCH_DIR/KernelSU/"
+            exit 1
+          fi
+          cp "$PATCH_10" "./$KSU_DIR/"
+
+          (cd "$KSU_DIR" && patch -p1 --forward --fuzz=3 < 10_enable_susfs_for_ksu.patch) || \
+            echo "⚠️ El parche 10 no aplicó completo. Como KernelSU-Next se mantiene cerca del upstream de tiann, intentamos una reparación genérica (no asumimos símbolos de SukiSU-Ultra, que NO existen acá)."
+
+          if grep -q "susfs_init()" "$INIT_C"; then
+            echo "✅ susfs_init() ya presente en init.c (el parche aplicó bien, o ya estaba)."
+          else
+            echo "🔧 susfs_init() no quedó insertado — buscando un anchor genérico en $INIT_C"
+            # KernelSU-Next sigue la estructura clásica de tiann/KernelSU: una función
+            # __init tipo kernelsu_init()/ksu_core_init() que termina con "return 0;".
+            # En vez de asumir un nombre de símbolo específico (que puede cambiar entre
+            # versiones del fork), insertamos justo antes del primer "return 0;" dentro
+            # de la función marcada __init, que es donde upstream inserta su propio
+            # hook de susfs_init() en el parche oficial.
+            python3 - "$INIT_C" <<'PYEOF'
+          import re, sys
+          path = sys.argv[1]
+          with open(path) as f:
+              content = f.read()
+          original = content
+
+          if "susfs_init()" in content:
+              print("   ✅ susfs_init() ya presente, nada que hacer")
+              sys.exit(0)
+
+          # Buscar la función marcada __init (la de inicialización del módulo KSU)
+          m = re.search(r"(static\s+int\s*__init\s+\w+\s*\([^)]*\)\s*\{)(.*?)(\n\})", content, re.DOTALL)
+          if not m:
+              print("   ❌ No se encontró ninguna función 'static int __init ...(){...}' en init.c — estructura del fork cambió demasiado, revisar a mano")
+              sys.exit(1)
+
+          body = m.group(2)
+          # Insertar justo antes del último "return" dentro del cuerpo de esa función
+          ret_matches = list(re.finditer(r"\n([ \t]*)return\s+\w*;", body))
+          if not ret_matches:
+              print("   ❌ La función __init encontrada no tiene un 'return' claro donde insertar — revisar a mano")
+              sys.exit(1)
+          last_ret = ret_matches[-1]
+          indent = last_ret.group(1)
+          insertion = (
+              f"\n{indent}#ifdef CONFIG_KSU_SUSFS\n"
+              f"{indent}susfs_init();\n"
+              f"{indent}#endif\n"
+          )
+          new_body = body[:last_ret.start()] + insertion + body[last_ret.start():]
+          content = content[:m.start()] + m.group(1) + new_body + m.group(3) + content[m.end():]
+
+          if content == original:
+              print("   ⚠️ El script no modificó nada, revisar a mano")
+              sys.exit(1)
+
+          with open(path, "w") as f:
+              f.write(content)
+          print("   ✅ susfs_init() inyectado genéricamente antes del return de la función __init")
+          PYEOF
+            grep -q "susfs_init()" "$INIT_C" || { echo "❌ La inyección genérica de susfs_init() falló"; exit 1; }
+          fi
+
+          echo "📋 Líneas con susfs_init() en $INIT_C (para confirmar dónde quedó insertado):"
+          grep -n "susfs_init" "$INIT_C"
+
+          # -----------------------------------------------------------------
+          # 2. Aplicar el parche 50 (fs/, hooks core) — esta parte es genérica
+          #    y no depende del fork, ya que actúa sobre funciones sucompat
+          #    estándar que existen igual en KernelSU-Next.
+          # -----------------------------------------------------------------
+          echo "🩹 [2/2] Aplicando parche 50 sobre el árbol del kernel (fs/, hooks core)..."
+          PATCH_50=$(ls $PATCH_DIR/50_add_susfs_in_*.patch | head -n 1)
+          test -n "$PATCH_50" || { echo "❌ No se encontró parche 50_add_susfs_in_*.patch"; exit 1; }
+
+          patch -p1 --forward < "$PATCH_50" || echo "⚠️ Algunos hunks del parche 50 fallaron. Iniciando inyección manual a prueba de balas..."
+
+          # --- INICIO DE AUTO-REPARACIÓN (idéntica a la usada para SukiSU-Ultra,
+          #     porque estas dependencias son de fs/ core y no del driver KSU) ---
+          echo "🛠️ Inyectando dependencias base de SUSFS..."
+
+          sed -i '1i #include <linux/sched.h>\n#include <linux/thread_info.h>\n#include <linux/cred.h>' include/linux/susfs_def.h
+
+          for f in mm/memory.c fs/namespace.c fs/open.c fs/proc/base.c fs/exec.c; do
+            if ! grep -q "linux/susfs_def.h" "$f"; then
+              LAST_INCLUDE=$(grep -n "^#include" "$f" | tail -1 | cut -d: -f1)
+              if [ -n "$LAST_INCLUDE" ]; then
+                sed -i "${LAST_INCLUDE}a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif" "$f"
+              else
+                sed -i '1i #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' "$f"
+              fi
+            fi
+          done
+
+          if ! grep -q "SUSFS_AUTOFIX_NAMESPACE" fs/namespace.c; then
+            echo "   [namespace.c] inyectando externs (marcador propio no encontrado)"
+            sed -i '/#include <linux\/susfs_def.h>/a #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n/* SUSFS_AUTOFIX_NAMESPACE */\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n#define CL_COPY_MNT_NS BIT(25)\n#endif' fs/namespace.c
+          else
+            echo "   [namespace.c] ya aplicado en esta corrida -> salteado"
+          fi
+
+          if ! grep -q "SUSFS_AUTOFIX_OPEN_EXTERNS" fs/open.c; then
+            echo "   [open.c] inyectando externs (ksu_su_compat_enabled / __ksu_is_allow_uid_for_current / ksu_handle_faccessat)"
+            sed -i '/#include <linux\/susfs_def.h>/a #ifdef CONFIG_KSU_SUSFS\n/* SUSFS_AUTOFIX_OPEN_EXTERNS */\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\n#endif' fs/open.c
+          else
+            echo "   [open.c] externs ya aplicados en esta corrida -> salteado"
+          fi
+
+          if ! grep -q "SUSFS_AUTOFIX_RETRY_LABEL" fs/open.c; then
+            echo "   [open.c] inyectando label retry: con marcador propio"
+            sed -i '/fd = get_unused_fd_flags(how->flags);/a #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n/* SUSFS_AUTOFIX_RETRY_LABEL */\nretry:\n#endif' fs/open.c
+          else
+            echo "   [open.c] label retry ya aplicada en esta corrida -> salteado"
+          fi
+
+          if ! grep -q "SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK" fs/open.c; then
+            echo "   [open.c] inyectando bloque de uso de open_redirect (fake_filename / is_inode_open_redirect)"
+            sed -i '/struct file \*f = do_filp_open(dfd, tmp, &op);/a \
+          #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\
+          \t\t/* SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK */\n\
+          \t\tif (!is_inode_open_redirect && f && !IS_ERR(f)) {\n\
+          \t\t\tstruct inode *inode = file_inode(f);\n\
+          \t\t\tif (SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(inode)) {\n\
+          \t\t\t\tfake_filename = susfs_open_redirect_spoof_do_sys_openat(inode);\n\
+          \t\t\t\tif (fake_filename && !IS_ERR(fake_filename)) {\n\
+          \t\t\t\t\tis_inode_open_redirect = true;\n\
+          \t\t\t\t\tfilp_close(f, NULL);\n\
+          \t\t\t\t\tputname(tmp);\n\
+          \t\t\t\t\ttmp = fake_filename;\n\
+          \t\t\t\t\tgoto retry;\n\
+          \t\t\t\t}\n\
+          \t\t\t}\n\
+          \t\t}\n\
+          #endif' fs/open.c
+          else
+            echo "   [open.c] bloque open_redirect ya aplicado en esta corrida -> salteado"
+          fi
+
+          if ! grep -q "SUSFS_AUTOFIX_EXEC" fs/exec.c; then
+            echo "   [exec.c] inyectando externs"
+            sed -i '/#include <linux\/susfs_def.h>/a #ifdef CONFIG_KSU_SUSFS\n/* SUSFS_AUTOFIX_EXEC */\nextern struct static_key_true ksu_su_compat_enabled;\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nextern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\n#endif' fs/exec.c
+          else
+            echo "   [exec.c] ya aplicado en esta corrida -> salteado"
+          fi
+
+          echo "🔎 Verificando que los marcadores de auto-reparación quedaron insertados..."
+          for check in "fs/namespace.c:SUSFS_AUTOFIX_NAMESPACE" "fs/open.c:SUSFS_AUTOFIX_OPEN_EXTERNS" "fs/open.c:SUSFS_AUTOFIX_RETRY_LABEL" "fs/open.c:SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK" "fs/exec.c:SUSFS_AUTOFIX_EXEC"; do
+            file="${check%%:*}"
+            marker="${check##*:}"
+            if grep -q "$marker" "$file"; then
+              echo "   ✅ $marker presente en $file"
+            else
+              echo "   ❌ $marker NO quedó insertado en $file — el ancla del sed no matcheó, revisar a mano"
+              exit 1
+            fi
+          done
+          echo "✅ Auto-reparación de fs/ completada con éxito."
+          # --- FIN DE AUTO-REPARACIÓN ---
+
+          if ls $PATCH_DIR/51_susfs_add_hook_in_*.patch 1> /dev/null 2>&1; then
+            patch -p1 --forward < $(ls $PATCH_DIR/51_susfs_add_hook_in_*.patch | head -n 1) || {
+              echo "❌ Falló el parche 51 — revisar *.rej:"
+              find . -name '*.rej' -exec echo "--- {} ---" \; -exec cat {} \;
+              exit 1
+            }
+          else
+            echo "ℹ️ Parche 51 no encontrado, los hooks probablemente estén unificados en el parche 50."
+          fi
+
+          grep -q "susfs" fs/Makefile || { echo "❌ El parche 50 no modificó fs/Makefile como se esperaba, abortando en vez de inyectar a mano"; exit 1; }
+
+          # -----------------------------------------------------------------
+          # NOTA IMPORTANTE:
+          # A diferencia del step de SukiSU-Ultra, aquí NO tocamos ningún
+          # Kbuild/Makefile del driver para agregar infra/symbol_resolver.o,
+          # porque ese objeto es parte de un refactor interno exclusivo de
+          # SukiSU-Ultra (resolución dinámica de símbolos del kernel).
+          # KernelSU-Next no tiene ese mecanismo, así que si el driver no
+          # compila por un símbolo indefinido, el problema es otro y no debe
+          # "resolverse" copiando ese parche.
+          # -----------------------------------------------------------------
+          echo "🔎 Verificación final: ¿drivers/kernelsu (symlink) refleja el driver ya parcheado?"
+          if [ -f drivers/kernelsu/core/init.c ]; then
+            grep -q "susfs_init()" drivers/kernelsu/core/init.c || { echo "❌ drivers/kernelsu/core/init.c no tiene susfs_init(), el symlink no apunta a $KSU_DIR ya parcheado"; exit 1; }
+            echo "✅ drivers/kernelsu (vía symlink) refleja el driver ya parcheado con SUSFS"
+          else
+            echo "ℹ️ No existe drivers/kernelsu como symlink en este árbol — verificar en el defconfig/Kconfig cómo se referencia $KSU_DIR"
+          fi
 
       - name: Integrar parches SUSFS al código del Kernel (Rama GKI 6.6)
         if: ${{ inputs.root_provider == 'sukisu-ultra-v4.1.3' }}
