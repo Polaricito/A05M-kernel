@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/build_ksu-release.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -71,11 +72,21 @@ jobs:
       # 3. Obtener la última release de KernelSU-Next
       # ------------------------------------------------------------------
       - name: Get latest KernelSU-Next release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          KSU_VERSION=$(curl -s https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest | jq -r '.tag_name')
+          KSU_VERSION=$(curl -sSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest \
+            | jq -r '.tag_name')
+
+          if [ -z "$KSU_VERSION" ] || [ "$KSU_VERSION" = "null" ]; then
+            echo "No se pudo obtener KSU_VERSION (revisa rate limit de la API de GitHub)"
+            exit 1
+          fi
 
           echo "KernelSU Version: $KSU_VERSION"
-
           echo "KSU_VERSION=$KSU_VERSION" >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------
@@ -102,16 +113,18 @@ jobs:
       - name: Locate compiled Image
         run: |
           echo "===== DIST_DIR ====="
-          find "$DIST_DIR" || {
-            echo "DIST_DIR no existe"
-            exit 1
-          }
 
-          FOUND=$(find "$DIST_DIR" -type f \( -name "Image" -o -name "Image.gz" \) | head -n1)
+          FOUND=""
+
+          if [ -d "$DIST_DIR" ]; then
+            FOUND=$(find "$DIST_DIR" -type f \( -name "Image" -o -name "Image.gz" \) | head -n1)
+          else
+            echo "DIST_DIR no existe, probando ruta alterna..."
+          fi
 
           if [ -z "$FOUND" ]; then
             FOUND=$(find out/target/product/a05m/obj/KLEAF_OBJ \
-              -type f \( -name "Image" -o -name "Image.gz" \) | head -n1)
+              -type f \( -name "Image" -o -name "Image.gz" \) 2>/dev/null | head -n1)
           fi
 
           if [ -z "$FOUND" ]; then
@@ -134,6 +147,7 @@ jobs:
 
           cd AnyKernel3
           zip -r9 "../$ZIP_NAME" . -x ".git*"
+          cd ..
 
           echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
 
