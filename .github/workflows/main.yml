@@ -106,6 +106,14 @@ jobs:
         working-directory: ${{ env.KERNEL_SRC }}/KernelSU-Next
         run: git rev-list --count HEAD || echo "FALLÓ el conteo de commits"
 
+      - name: Hardcode KSU_GIT_VERSION (Bazel sandbox has no git)
+        working-directory: ${{ env.KERNEL_SRC }}/KernelSU-Next
+        run: |
+          COUNT=$(git rev-list --count HEAD)
+          echo "Commit count real: $COUNT"
+          sed -i -E "s|^KSU_GIT_VERSION[[:space:]]*:=.*|KSU_GIT_VERSION := $COUNT|" kernel/Makefile
+          grep -n "KSU_GIT_VERSION" kernel/Makefile
+
       # ------------------------------------------------------------------
       # 5. Compilar
       # ------------------------------------------------------------------
