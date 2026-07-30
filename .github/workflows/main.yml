@@ -130,7 +130,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.KSU_VERSION }}
+          tag_name: 3.3.0
           name: "A05M Kernel - KernelSU-Next ${{ env.KSU_VERSION }}"
           body: |
             Build automático.
