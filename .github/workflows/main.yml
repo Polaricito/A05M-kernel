@@ -136,10 +136,10 @@ jobs:
           echo "KSUN_COMMIT=$(cd KernelSU-Next && git rev-parse HEAD)" >> "$GITHUB_ENV"
 
 
-       - name: Debug KernelSU-Next
-         if: ${{ inputs.root_provider == 'ksu-next-stable' }}
-         working-directory: ./kernel-6.6
-         run: |
+      - name: Debug KernelSU-Next
+        if: ${{ inputs.root_provider == 'ksu-next-stable' }}
+        working-directory: ./kernel-6.6
+        run: |
            set +e
 
            echo "=============================="
