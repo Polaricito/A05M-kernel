@@ -135,6 +135,69 @@ jobs:
 
           echo "KSUN_COMMIT=$(cd KernelSU-Next && git rev-parse HEAD)" >> "$GITHUB_ENV"
 
+
+       - name: Debug KernelSU-Next
+         if: ${{ inputs.root_provider == 'ksu-next-stable' }}
+         working-directory: ./kernel-6.6
+         run: |
+           set +e
+
+           echo "=============================="
+           echo "KERNELSU INFO"
+           echo "=============================="
+
+           echo
+           echo "Branch:"
+           (cd KernelSU-Next && git branch --show-current)
+
+           echo
+           echo "Commit:"
+           (cd KernelSU-Next && git rev-parse HEAD)
+
+           echo
+           echo "Last commit:"
+           (cd KernelSU-Next && git log -1)
+
+           echo
+           echo "=============================="
+           echo "Searching symbols..."
+           echo "=============================="
+
+           grep -R "susfs_open_redirect_spoof_do_sys_openat" KernelSU-Next || true
+           grep -R "SUSFS_IS_INODE_OPEN_REDIRECT" KernelSU-Next || true
+           grep -R "open_redirect" KernelSU-Next || true
+           grep -R "susfs_init" KernelSU-Next || true
+           grep -R "KSU_SUSFS" KernelSU-Next || true
+
+           echo
+           echo "=============================="
+           echo "KernelSU tree"
+           echo "=============================="
+
+           find KernelSU-Next/kernel -maxdepth 2 -type f | sort
+
+           echo
+           echo "=============================="
+           echo "core/init.c"
+           echo "=============================="
+
+           find KernelSU-Next -name init.c -exec sh -c '
+               echo "===== $1 ====="
+               sed -n "1,250p" "$1"
+           ' _ {} \;
+
+           echo
+           echo "=============================="
+           echo "Searching exported functions"
+           echo "=============================="
+
+           grep -R "struct filename" KernelSU-Next || true
+           grep -R "extern" KernelSU-Next/kernel || true
+
+           echo
+           echo "=============================="
+           echo "Done"
+           echo "=============================="
       # -----------------------------------------------------------------
       # PASO 2: Aplicar el parche 50 (fs/) al kernel.
       #
@@ -272,6 +335,28 @@ jobs:
               || echo "⚠️ No se encontró susfs_init() en el init.c del driver — inesperado, revisar a mano"
           fi
 
+      - name: Debug patched files
+        if: ${{ inputs.root_provider == 'ksu-next-stable' }}
+        working-directory: ./kernel-6.6
+        run: |
+           echo "===== fs/open.c ====="
+           grep -n "SUSFS_AUTOFIX" fs/open.c || true
+
+           echo
+           grep -n "open_redirect" fs/open.c || true
+
+           echo
+           grep -n "susfs_open_redirect" fs/open.c || true
+
+           echo
+           grep -n "fake_filename" fs/open.c || true
+
+           echo
+           echo "===== Rejected patches ====="
+           find . -name "*.rej" -exec sh -c '
+               echo "========== $1 =========="
+               cat "$1"
+           ' _ {} \;
       # ------------------------------------------------------------------
       # 5. Compilar
       # ------------------------------------------------------------------
