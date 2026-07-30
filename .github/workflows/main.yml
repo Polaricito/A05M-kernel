@@ -272,27 +272,12 @@ jobs:
               || echo "⚠️ No se encontró susfs_init() en el init.c del driver — inesperado, revisar a mano"
           fi
           
-      - name: Debug patch result
+      - name: Check open.c declarations
         working-directory: ./kernel-6.6
         run: |
-          echo "========== PATCH STATUS =========="
-
-          find . -name "*.orig"
-          find . -name "*.rej"
-
+          grep -n "susfs_open_redirect_spoof_do_sys_openat" fs/open.c
           echo
-          echo "========== CONFIG =========="
-          grep CONFIG_KSU_SUSFS .config || true
-
-          echo
-          echo "========== SUSFS FILES =========="
-          find fs -iname "*sus*" -o -iname "*ksu*"
-
-          echo
-          echo "========== DEFINITIONS =========="
-          grep -R "susfs_open_redirect_spoof_do_sys_openat" . || true
-          grep -R "susfs_add_open_redirect" . || true
-          grep -R "open_redirect" . || true
+          head -120 fs/open.c
           
       # ------------------------------------------------------------------
       # 5. Compilar
