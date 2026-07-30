@@ -182,21 +182,27 @@ jobs:
             fi
           done
 
-          if ! grep -q "SUSFS_AUTOFIX_NAMESPACE" fs/namespace.c; then
+          if grep -q "susfs_is_current_ksu_domain\|CL_COPY_MNT_NS" fs/namespace.c; then
+            echo "   [namespace.c] el parche oficial ya resolvió esto (símbolos presentes) -> NO se inyecta duplicado"
+          elif ! grep -q "SUSFS_AUTOFIX_NAMESPACE" fs/namespace.c; then
             echo "   [namespace.c] inyectando externs (marcador propio no encontrado)"
             sed -i '/#include <linux\/susfs_def.h>/a #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n/* SUSFS_AUTOFIX_NAMESPACE */\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n#define CL_COPY_MNT_NS BIT(25)\n#endif' fs/namespace.c
           else
             echo "   [namespace.c] ya aplicado en esta corrida -> salteado"
           fi
 
-          if ! grep -q "SUSFS_AUTOFIX_OPEN_EXTERNS" fs/open.c; then
-          echo "   [open.c] inyectando externs (ksu_su_compat_enabled / __ksu_is_allow_uid_for_current / ksu_handle_faccessat / open_redirect)"
-          sed -i '/#include <linux\/susfs_def.h>/a #ifdef CONFIG_KSU_SUSFS\n/* SUSFS_AUTOFIX_OPEN_EXTERNS */\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\nextern struct filename *susfs_open_redirect_spoof_do_sys_openat(struct inode *inode);\n#endif' fs/open.c
+          if grep -q "ksu_handle_faccessat" fs/open.c; then
+            echo "   [open.c] el parche oficial ya declaró estos símbolos -> NO se inyecta duplicado"
+          elif ! grep -q "SUSFS_AUTOFIX_OPEN_EXTERNS" fs/open.c; then
+            echo "   [open.c] inyectando externs (ksu_su_compat_enabled / __ksu_is_allow_uid_for_current / ksu_handle_faccessat)"
+            sed -i '/#include <linux\/susfs_def.h>/a #ifdef CONFIG_KSU_SUSFS\n/* SUSFS_AUTOFIX_OPEN_EXTERNS */\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\n#endif' fs/open.c
           else
             echo "   [open.c] externs ya aplicados en esta corrida -> salteado"
           fi
 
-          if ! grep -q "SUSFS_AUTOFIX_RETRY_LABEL" fs/open.c; then
+          if grep -qE '^\s*retry:' fs/open.c; then
+            echo "   [open.c] ya existe un label retry: (probablemente del parche oficial) -> NO se inyecta duplicado"
+          elif ! grep -q "SUSFS_AUTOFIX_RETRY_LABEL" fs/open.c; then
             echo "   [open.c] inyectando label retry: con marcador propio"
             sed -i '/fd = get_unused_fd_flags(how->flags);/a #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n/* SUSFS_AUTOFIX_RETRY_LABEL */\nretry:\n#endif' fs/open.c
           else
@@ -230,25 +236,30 @@ jobs:
             echo "   [open.c] bloque open_redirect ya aplicado en esta corrida -> salteado"
           fi
 
-          if ! grep -q "SUSFS_AUTOFIX_EXEC" fs/exec.c; then
+          if grep -q "ksu_handle_execveat" fs/exec.c; then
+            echo "   [exec.c] el parche oficial ya declaró estos símbolos -> NO se inyecta duplicado"
+          elif ! grep -q "SUSFS_AUTOFIX_EXEC" fs/exec.c; then
             echo "   [exec.c] inyectando externs"
             sed -i '/#include <linux\/susfs_def.h>/a #ifdef CONFIG_KSU_SUSFS\n/* SUSFS_AUTOFIX_EXEC */\nextern struct static_key_true ksu_su_compat_enabled;\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nextern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\n#endif' fs/exec.c
           else
             echo "   [exec.c] ya aplicado en esta corrida -> salteado"
           fi
 
-          echo "🔎 Verificando que los marcadores de auto-reparación quedaron insertados..."
-          for check in "fs/namespace.c:SUSFS_AUTOFIX_NAMESPACE" "fs/open.c:SUSFS_AUTOFIX_OPEN_EXTERNS" "fs/open.c:SUSFS_AUTOFIX_RETRY_LABEL" "fs/open.c:SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK" "fs/exec.c:SUSFS_AUTOFIX_EXEC"; do
-            file="${check%%:*}"
-            marker="${check##*:}"
-            if grep -q "$marker" "$file"; then
-              echo "   ✅ $marker presente en $file"
+          echo "🔎 Verificando que fs/ quedó en un estado consistente (marcador propio O símbolo del parche oficial)..."
+          for check in "fs/namespace.c:SUSFS_AUTOFIX_NAMESPACE:susfs_is_current_ksu_domain" "fs/open.c:SUSFS_AUTOFIX_OPEN_EXTERNS:ksu_handle_faccessat" "fs/open.c:SUSFS_AUTOFIX_RETRY_LABEL:retry:" "fs/open.c:SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK:susfs_open_redirect_spoof_do_sys_openat" "fs/exec.c:SUSFS_AUTOFIX_EXEC:ksu_handle_execveat"; do
+            file="$(echo "$check" | cut -d: -f1)"
+            marker="$(echo "$check" | cut -d: -f2)"
+            symbol="$(echo "$check" | cut -d: -f3)"
+            if grep -q "$marker" "$file" 2>/dev/null; then
+              echo "   ✅ $marker presente en $file (inyectado por auto-reparación)"
+            elif grep -qF "$symbol" "$file" 2>/dev/null; then
+              echo "   ✅ $symbol presente en $file (ya resuelto por el parche oficial, sin duplicar)"
             else
-              echo "   ❌ $marker NO quedó insertado en $file — el ancla del sed no matcheó, revisar a mano"
+              echo "   ❌ Ni $marker ni $symbol están en $file — algo quedó a medias, revisar a mano"
               exit 1
             fi
           done
-          echo "✅ Auto-reparación de fs/ completada con éxito."
+          echo "✅ Auto-reparación de fs/ completada con éxito (sin duplicados)."
           # --- FIN DE AUTO-REPARACIÓN ---
 
           if ls $PATCH_DIR/51_susfs_add_hook_in_*.patch 1> /dev/null 2>&1; then
@@ -271,13 +282,6 @@ jobs:
             grep -q "susfs_init()" KernelSU-Next/kernel/core/init.c && echo "✅ susfs_init() presente en KernelSU-Next/kernel/core/init.c (integrado de fábrica en esta rama)" \
               || echo "⚠️ No se encontró susfs_init() en el init.c del driver — inesperado, revisar a mano"
           fi
-          
-      - name: Check open.c declarations
-        working-directory: ./kernel-6.6
-        run: |
-          grep -n "susfs_open_redirect_spoof_do_sys_openat" fs/open.c
-          echo
-          head -120 fs/open.c
           
       # ------------------------------------------------------------------
       # 5. Compilar
