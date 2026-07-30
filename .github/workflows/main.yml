@@ -200,40 +200,28 @@ jobs:
             echo "   [open.c] externs ya aplicados en esta corrida -> salteado"
           fi
 
-          if grep -qE '^\s*retry:' fs/open.c; then
-            echo "   [open.c] ya existe un label retry: (probablemente del parche oficial) -> NO se inyecta duplicado"
-          elif ! grep -q "SUSFS_AUTOFIX_RETRY_LABEL" fs/open.c; then
-            echo "   [open.c] inyectando label retry: con marcador propio"
-            sed -i '/fd = get_unused_fd_flags(how->flags);/a #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n/* SUSFS_AUTOFIX_RETRY_LABEL */\nretry:\n#endif' fs/open.c
-          else
-            echo "   [open.c] label retry ya aplicada en esta corrida -> salteado"
-          fi
+          # (Ya no se inyecta un label retry: manual — el bloque open_redirect que lo
+          # necesitaba fue reemplazado por una simple desactivación de la feature,
+          # ver más abajo. El falso positivo detectando un "retry:" ajeno fue
+          # justamente lo que rompió el build anterior.)
 
           if grep -q "susfs_open_redirect_spoof_do_sys_openat\|is_inode_open_redirect" fs/open.c; then
-            echo "   [open.c] el parche oficial ya resolvió open_redirect (símbolos presentes) -> NO se inyecta duplicado"
-          elif ! grep -q "SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK" fs/open.c; then
-            echo "   [open.c] inyectando bloque de uso de open_redirect (fake_filename / is_inode_open_redirect)"
-            sed -i '/struct file \*f = do_filp_open(dfd, tmp, &op);/a \
-          #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\
-          \t\t/* SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK */\n\
-          \t\tbool is_inode_open_redirect = false;\n\
-          \t\tstruct filename *fake_filename;\n\
-          \t\tif (!is_inode_open_redirect && f && !IS_ERR(f)) {\n\
-          \t\t\tstruct inode *inode = file_inode(f);\n\
-          \t\t\tif (SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(inode)) {\n\
-          \t\t\t\tfake_filename = susfs_open_redirect_spoof_do_sys_openat(inode);\n\
-          \t\t\t\tif (fake_filename && !IS_ERR(fake_filename)) {\n\
-          \t\t\t\t\tis_inode_open_redirect = true;\n\
-          \t\t\t\t\tfilp_close(f, NULL);\n\
-          \t\t\t\t\tputname(tmp);\n\
-          \t\t\t\t\ttmp = fake_filename;\n\
-          \t\t\t\t\tgoto retry;\n\
-          \t\t\t\t}\n\
-          \t\t\t}\n\
-          \t\t}\n\
-          #endif' fs/open.c
+            echo "   [open.c] el parche oficial ya resolvió open_redirect (símbolos presentes) -> nada que hacer"
           else
-            echo "   [open.c] bloque open_redirect ya aplicado en esta corrida -> salteado"
+            echo "   ⚠️ [open.c] El parche oficial no dejó open_redirect funcional (SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK)."
+            echo "      Ya intentamos reescribir este bloque a mano dos veces y ambas rompieron la compilación"
+            echo "      (requiere conocer la estructura exacta de do_sys_openat2 en esta versión del kernel,"
+            echo "      algo que no podemos verificar sin ver el archivo real). En vez de seguir adivinando,"
+            echo "      desactivamos esta característica puntual y opcional de SUSFS (anti-detección de"
+            echo "      spoofing de rutas) para no bloquear el build completo. El resto de SUSFS (magic mount,"
+            echo "      ocultamiento de módulos/procesos, etc.) sigue intacto."
+            for cfg_file in $(find . -maxdepth 2 -iname "*.config" -o -iname "*defconfig*" 2>/dev/null); do
+              if grep -q "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" "$cfg_file" 2>/dev/null; then
+                sed -i 's/CONFIG_KSU_SUSFS_OPEN_REDIRECT=y/# CONFIG_KSU_SUSFS_OPEN_REDIRECT is not set/' "$cfg_file"
+                echo "      Desactivado en: $cfg_file"
+              fi
+            done
+            echo "SUSFS_AUTOFIX_OPEN_REDIRECT_DISABLED=1" >> "$GITHUB_ENV"
           fi
 
           if grep -q "ksu_handle_execveat" fs/exec.c; then
@@ -246,7 +234,7 @@ jobs:
           fi
 
           echo "🔎 Verificando que fs/ quedó en un estado consistente (marcador propio O símbolo del parche oficial)..."
-          for check in "fs/namespace.c:SUSFS_AUTOFIX_NAMESPACE:susfs_is_current_ksu_domain" "fs/open.c:SUSFS_AUTOFIX_OPEN_EXTERNS:ksu_handle_faccessat" "fs/open.c:SUSFS_AUTOFIX_RETRY_LABEL:retry:" "fs/open.c:SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK:susfs_open_redirect_spoof_do_sys_openat" "fs/exec.c:SUSFS_AUTOFIX_EXEC:ksu_handle_execveat"; do
+          for check in "fs/namespace.c:SUSFS_AUTOFIX_NAMESPACE:susfs_is_current_ksu_domain" "fs/open.c:SUSFS_AUTOFIX_OPEN_EXTERNS:ksu_handle_faccessat" "fs/exec.c:SUSFS_AUTOFIX_EXEC:ksu_handle_execveat"; do
             file="$(echo "$check" | cut -d: -f1)"
             marker="$(echo "$check" | cut -d: -f2)"
             symbol="$(echo "$check" | cut -d: -f3)"
@@ -259,6 +247,11 @@ jobs:
               exit 1
             fi
           done
+          if grep -q "susfs_open_redirect_spoof_do_sys_openat\|is_inode_open_redirect" fs/open.c; then
+            echo "   ✅ open_redirect resuelto por el parche oficial en fs/open.c"
+          else
+            echo "   ℹ️ open_redirect desactivado (CONFIG_KSU_SUSFS_OPEN_REDIRECT) — feature opcional, no bloquea el resto"
+          fi
           echo "✅ Auto-reparación de fs/ completada con éxito (sin duplicados)."
           # --- FIN DE AUTO-REPARACIÓN ---
 
