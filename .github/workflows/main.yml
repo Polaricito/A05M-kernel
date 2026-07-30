@@ -203,11 +203,15 @@ jobs:
             echo "   [open.c] label retry ya aplicada en esta corrida -> salteado"
           fi
 
-          if ! grep -q "SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK" fs/open.c; then
+          if grep -q "susfs_open_redirect_spoof_do_sys_openat\|is_inode_open_redirect" fs/open.c; then
+            echo "   [open.c] el parche oficial ya resolvió open_redirect (símbolos presentes) -> NO se inyecta duplicado"
+          elif ! grep -q "SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK" fs/open.c; then
             echo "   [open.c] inyectando bloque de uso de open_redirect (fake_filename / is_inode_open_redirect)"
             sed -i '/struct file \*f = do_filp_open(dfd, tmp, &op);/a \
           #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\
           \t\t/* SUSFS_AUTOFIX_OPEN_REDIRECT_BLOCK */\n\
+          \t\tbool is_inode_open_redirect = false;\n\
+          \t\tstruct filename *fake_filename;\n\
           \t\tif (!is_inode_open_redirect && f && !IS_ERR(f)) {\n\
           \t\t\tstruct inode *inode = file_inode(f);\n\
           \t\t\tif (SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(inode)) {\n\
