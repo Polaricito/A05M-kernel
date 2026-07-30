@@ -115,7 +115,6 @@ def main(**args):
     file_text.append("  KMI_SYMBOL_LIST_ADD_ONLY=1")
     file_text.append("  ADDITIONAL_KMI_SYMBOL_LISTS=\"${ADDITIONAL_KMI_SYMBOL_LISTS} android/abi_gki_aarch64\"")
     file_text.append("fi")
-    file_text.append("unset BUILD_NUMBER")
     file_text.append("if [ -z \"${SOURCE_DATE_EPOCH}\" ]; then")
     file_text.append("  export SOURCE_DATE_EPOCH=0")
     file_text.append("  export GKI_SOURCE_DATE_EPOCH=0")

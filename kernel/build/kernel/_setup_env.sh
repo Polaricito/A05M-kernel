@@ -78,6 +78,9 @@ export MODULES_ARCHIVE=modules.tar.gz
 
 export TZ=UTC
 export LC_ALL=C
+if [ ! -d ${ROOT_DIR}/${KERNEL_DIR}/.git ]; then
+  SOURCE_DATE_EPOCH=`date "+%s"`
+fi
 if [ -z "${SOURCE_DATE_EPOCH}" ]; then
   if [[ -n "${KLEAF_SOURCE_DATE_EPOCHS}" ]]; then
     export SOURCE_DATE_EPOCH=$(extract_git_metadata "${KLEAF_SOURCE_DATE_EPOCHS}" "${KERNEL_DIR}" SOURCE_DATE_EPOCH)
